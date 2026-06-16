@@ -79,7 +79,8 @@ export async function POST(request: NextRequest) {
     // Build course count map
     const courseCountMap: Record<string, number> = {}
     for (const row of (courseCounts ?? [])) {
-      const name = (row.competitors as { name: string } | null)?.name ?? row.competitor_id
+      const compRaw = row.competitors
+      const name = (Array.isArray(compRaw) ? compRaw[0] : compRaw)?.name ?? row.competitor_id
       courseCountMap[name] = (courseCountMap[name] ?? 0) + 1
     }
 

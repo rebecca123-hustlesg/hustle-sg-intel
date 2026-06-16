@@ -45,7 +45,8 @@ export async function GET(request: NextRequest) {
   const courseCountByCompetitor: Record<string, { total: number; sf_claimable: number; name: string }> = {}
   for (const row of (countData ?? [])) {
     const cid = row.competitor_id
-    const compName = (row.competitors as { name: string } | null)?.name ?? cid
+    const compRaw = row.competitors
+    const compName = (Array.isArray(compRaw) ? compRaw[0] : compRaw)?.name ?? cid
     if (!courseCountByCompetitor[cid]) {
       courseCountByCompetitor[cid] = { total: 0, sf_claimable: 0, name: compName }
     }
