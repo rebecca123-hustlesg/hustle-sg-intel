@@ -1,4 +1,3 @@
-import * as cheerio from 'cheerio'
 import type { ScraperResult } from '@/lib/types'
 
 interface YouTubeData {
@@ -7,124 +6,115 @@ interface YouTubeData {
   channel_name: string
 }
 
-function parseYTNum(s: string): number {
-  const clean = s.replace(/,/g, '').trim()
-  if (clean.toLowerCase().endsWith('m')) {
-    return Math.round(parseFloat(clean) * 1_000_000)
+/**
+ * Resolves a channel identifier to a YouTube channel ID.
+ * Accepts:
+ *   - UC... channel IDs  (used directly)
+ *   - @handle            (uses forHandle param)
+ *   - c/username         (uses forUsername param)
+ *   - bare username      (uses forUsername param)
+ */
+async function resolveChannelId(
+  identifier: string,
+  apiKey: string
+): Promise<string | null> {
+  // Already a channel ID
+  if (identifier.startsWith('UC')) {
+    return identifier
   }
-  if (clean.toLowerCase().endsWith('k')) {
-    return Math.round(parseFloat(clean) * 1_000)
+
+  // @handle — YouTube Data API supports forHandle
+  if (identifier.startsWith('@')) {
+    const handle = identifier.slice(1) // strip the @
+    const url = `https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=${encodeURIComponent(handle)}&key=${apiKey}`
+    const res = await fetch(url)
+    const data = await res.json()
+    return data?.items?.[0]?.id ?? null
   }
-  return parseInt(clean, 10) || 0
+
+  // c/username or bare username — use forUsername
+  const username = identifier.startsWith('c/')
+    ? identifier.slice(2)
+    : identifier
+  const url = `https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${encodeURIComponent(username)}&key=${apiKey}`
+  const res = await fetch(url)
+  const data = await res.json()
+  return data?.items?.[0]?.id ?? null
 }
 
 export async function scrapeYouTube(
   channelIdentifier: string
 ): Promise<ScraperResult<YouTubeData>> {
   const scraped_at = new Date().toISOString()
+  const sourceUrl = channelIdentifier.startsWith('http')
+    ? channelIdentifier
+    : `https://www.youtube.com/${channelIdentifier}`
 
-  // channelIdentifier can be a channel ID (UCxxx), a @handle, or a /c/ path
-  let url: string
-  if (channelIdentifier.startsWith('UC')) {
-    url = `https://www.youtube.com/channel/${channelIdentifier}`
-  } else if (channelIdentifier.startsWith('@')) {
-    url = `https://www.youtube.com/${channelIdentifier}`
-  } else if (channelIdentifier.startsWith('c/')) {
-    url = `https://www.youtube.com/${channelIdentifier}`
-  } else {
-    url = `https://www.youtube.com/@${channelIdentifier}`
+  const apiKey = process.env.YOUTUBE_API_KEY
+
+  if (!apiKey) {
+    return {
+      success: false,
+      data: null,
+      error: 'YOUTUBE_API_KEY not configured',
+      scraped_at,
+      source: sourceUrl,
+    }
   }
 
   try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      next: { revalidate: 0 },
-    })
+    // Step 1: resolve identifier → channel ID
+    const channelId = await resolveChannelId(channelIdentifier, apiKey)
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-    }
-
-    const html = await res.text()
-    const $ = cheerio.load(html)
-
-    // YouTube embeds subscriber count in ytInitialData JSON
-    const scripts = $('script').toArray()
-    let subscriberCount: number | null = null
-    let videoCount: number | null = null
-    let channelName: string | null = null
-
-    for (const script of scripts) {
-      const content = $(script).html() || ''
-      if (content.includes('ytInitialData')) {
-        try {
-          const match = content.match(/var ytInitialData\s*=\s*(\{.+?\});/)
-          if (match) {
-            const data = JSON.parse(match[1])
-            // Navigate the ytInitialData structure to find subscriber count
-            const header =
-              data?.header?.c4TabbedHeaderRenderer ||
-              data?.header?.pageHeaderRenderer
-            if (header) {
-              channelName = header?.title || null
-              const subscriberText =
-                header?.subscriberCountText?.simpleText ||
-                header?.subscriberCountText?.runs?.[0]?.text ||
-                ''
-              if (subscriberText) {
-                const numMatch = subscriberText.match(/([\d,.KMkm]+)/i)
-                if (numMatch) {
-                  subscriberCount = parseYTNum(numMatch[1])
-                }
-              }
-            }
-          }
-        } catch {
-          // JSON parse error — try next script
-        }
-      }
-
-      // Also check for subscriber count in meta tags as a fallback
-      if (subscriberCount === null) {
-        const metaDesc =
-          $('meta[name="description"]').attr('content') ||
-          $('meta[property="og:description"]').attr('content') ||
-          ''
-        const subMatch = metaDesc.match(/([\d,.KMkm]+)\s*subscribers/i)
-        if (subMatch) {
-          subscriberCount = parseYTNum(subMatch[1])
-        }
+    if (!channelId) {
+      return {
+        success: false,
+        data: null,
+        error: `Could not resolve channel ID for: ${channelIdentifier}`,
+        scraped_at,
+        source: sourceUrl,
       }
     }
 
-    // Try to get video count from channel stats
-    const statsText = html.match(/"videoCountText":\{"runs":\[\{"text":"([\d,]+)"\}/)?.[1]
-    if (statsText) {
-      videoCount = parseInt(statsText.replace(/,/g, ''), 10)
+    // Step 2: fetch channel statistics
+    const statsUrl = `https://www.googleapis.com/youtube/v3/channels?part=statistics,snippet&id=${channelId}&key=${apiKey}`
+    const statsRes = await fetch(statsUrl)
+
+    if (!statsRes.ok) {
+      throw new Error(`YouTube API error: HTTP ${statsRes.status}`)
     }
 
-    if (subscriberCount === null) {
-      throw new Error(
-        'Could not parse subscriber count from YouTube page — likely blocked or structure changed'
-      )
+    const statsData = await statsRes.json()
+
+    if (statsData.error) {
+      throw new Error(`YouTube API error: ${statsData.error.message}`)
     }
+
+    const channel = statsData?.items?.[0]
+    if (!channel) {
+      return {
+        success: false,
+        data: null,
+        error: `Channel not found for ID: ${channelId}`,
+        scraped_at,
+        source: sourceUrl,
+      }
+    }
+
+    const subscribers = parseInt(channel.statistics?.subscriberCount ?? '0', 10)
+    const videos = parseInt(channel.statistics?.videoCount ?? '0', 10)
+    const channelName = channel.snippet?.title ?? channelIdentifier
 
     return {
       success: true,
       data: {
-        subscribers: subscriberCount,
-        videos: videoCount ?? 0,
-        channel_name: channelName ?? channelIdentifier,
+        subscribers,
+        videos,
+        channel_name: channelName,
       },
       error: null,
       scraped_at,
-      source: url,
+      source: `https://www.youtube.com/channel/${channelId}`,
     }
   } catch (err) {
     return {
@@ -132,7 +122,7 @@ export async function scrapeYouTube(
       data: null,
       error: err instanceof Error ? err.message : String(err),
       scraped_at,
-      source: url,
+      source: sourceUrl,
     }
   }
 }
