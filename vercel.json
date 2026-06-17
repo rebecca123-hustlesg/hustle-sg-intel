@@ -9,7 +9,7 @@
       "schedule": "0 0 * * *"
     },
     {
-      "path": "/api/cron/courses-refresh",
+      "path": "/api/cron/sf-refresh",
       "schedule": "0 1 * * *"
     },
     {
