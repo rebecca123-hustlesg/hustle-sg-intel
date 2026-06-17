@@ -32,46 +32,37 @@ function popScore(respondents: number, rating: number, hasRuns: boolean): number
 }
 
 function parseDoc(doc: Record<string, unknown>): SFCourse | null {
-  const refNo = doc['course_ref'] as string || doc['sf_ref_no'] as string
-  const title = doc['course_title'] as string || doc['title_name'] as string
-  if (!refNo || !title) return null
+  const sfRefNo = String(doc['Course_Ref_No'] ?? '').trim()
+  if (!sfRefNo) return null
 
-  const respondents = Number(doc['total_enrolled'] ?? doc['respondents'] ?? 0)
-  const rating = Number(doc['average_rating'] ?? doc['rating'] ?? 0)
-  const runs = doc['active_run_count'] ?? doc['runs']
-  const activeRunCount = Array.isArray(runs) ? runs.length : Number(runs ?? 0)
+  const title = String(doc['Course_Title'] ?? '').trim()
+  const providerName = String(doc['TP_ALIAS'] ?? doc['Organisation_Name'] ?? '').trim()
+  const categoryArr = doc['Area_of_Training_text'] as string[] | undefined
+  const category = categoryArr?.[0] ?? ''
+  const respondents = Number(doc['Course_Quality_NumberOfRespondents'] ?? 0)
+  const rating = Number(doc['Course_Quality_Stars_Rating'] ?? 0)
+  const hasRuns = Boolean(doc['HasCourseRun'])
+  const totalCost = doc['Tol_Cost_of_Trn_Per_Trainee'] != null
+    ? Number(doc['Tol_Cost_of_Trn_Per_Trainee'])
+    : null
+  const modeArr = doc['Mode_of_Training_text'] as string[] | undefined
+  const modeOfTraining = modeArr?.[0] ?? null
 
   return {
-    sfRefNo: String(refNo).trim(),
-    title: String(title).trim(),
-    providerName: String(doc['training_provider_name'] ?? doc['provider_name'] ?? '').trim(),
-    category: String(doc['tsg_occupational_category'] ?? doc['category'] ?? '').trim(),
-    durationHours: doc['total_training_duration_hour'] != null
-      ? Number(doc['total_training_duration_hour'])
-      : null,
-    fundingStart: doc['funding_validity_start']
-      ? String(doc['funding_validity_start'])
-      : null,
-    fundingEnd: doc['funding_validity_end']
-      ? String(doc['funding_validity_end'])
-      : null,
-    totalCost: doc['total_cost_without_gst'] != null
-      ? Number(doc['total_cost_without_gst'])
-      : null,
-    popularityScore: popScore(respondents, rating, activeRunCount > 0),
+    sfRefNo, title, providerName, category,
+    durationHours: null,
+    fundingStart: null,
+    fundingEnd: null,
+    totalCost,
+    popularityScore: popScore(respondents, rating, hasRuns),
     respondents,
     rating,
-    activeRunCount,
-    modeOfTraining: doc['mode_of_training']
-      ? String(doc['mode_of_training'])
-      : null,
+    activeRunCount: hasRuns ? 1 : 0,
+    modeOfTraining,
   }
 }
 
-export async function scrapeSkillsFutureV2(
-  searchTerm: string,
-  pageSize = 100,
-): Promise<SFScrapeResult> {
+export async function scrapeSkillsFutureV2(searchTerm: string, pageSize = 100): Promise<SFScrapeResult> {
   const params = new URLSearchParams({
     keyword: searchTerm,
     pageIndex: '0',
@@ -80,7 +71,6 @@ export async function scrapeSkillsFutureV2(
     filters: JSON.stringify({}),
   })
   const url = `${SF_API}?${params.toString()}`
-
   const res = await fetch(url, {
     headers: {
       'Accept': 'application/json',
@@ -89,21 +79,23 @@ export async function scrapeSkillsFutureV2(
     },
     next: { revalidate: 0 },
   })
-
-  if (!res.ok) {
-    throw new Error(`SkillsFuture API returned ${res.status}: ${res.statusText}`)
-  }
+  if (!res.ok) throw new Error(`SkillsFuture API returned ${res.status}: ${res.statusText}`)
 
   const json = await res.json() as Record<string, unknown>
-  const responseBody = (json['body'] ?? json) as Record<string, unknown>
-  const solrResponse = (responseBody['response'] ?? responseBody) as Record<string, unknown>
-  const docs = (solrResponse['docs'] ?? responseBody['data'] ?? []) as Record<string, unknown>[]
-  const numFound = Number(solrResponse['numFound'] ?? docs.length)
+
+  // API returns grouped Solr response: grouped.GroupID.groups[].doclist.docs[0]
+  const grouped = (json['grouped'] as Record<string, unknown> | undefined)?.['GroupID'] as Record<string, unknown> | undefined
+  const groups = (grouped?.['groups'] as Array<Record<string, unknown>> | undefined) ?? []
+  const numFound = Number(grouped?.['ngroups'] ?? groups.length)
 
   const courses: SFCourse[] = []
-  for (const doc of docs) {
-    const course = parseDoc(doc)
-    if (course) courses.push(course)
+  for (const group of groups) {
+    const doclist = group['doclist'] as Record<string, unknown> | undefined
+    const docs = (doclist?.['docs'] as Array<Record<string, unknown>> | undefined) ?? []
+    if (docs.length > 0) {
+      const course = parseDoc(docs[0])
+      if (course) courses.push(course)
+    }
   }
 
   return { courses, sourceUrl: url, totalFound: numFound }
