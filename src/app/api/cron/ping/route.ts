@@ -18,28 +18,63 @@ export async function GET(request: Request) {
 
   try {
     const supabase = await createServiceClient()
-    const { data, error } = await supabase.from('competitors').select('id, name').limit(3)
-    results.supabase_ok = !error
-    results.supabase_error = error?.message ?? null
-    results.competitors_found = data?.length ?? 0
-    results.sample = data?.map(c => c.name) ?? []
-  } catch (e) {
-    results.supabase_ok = false
-    results.supabase_error = e instanceof Error ? e.message : String(e)
-  }
 
-  if (process.env.YOUTUBE_API_KEY) {
-    try {
-      const r = await fetch(
-        `https://www.googleapis.com/youtube/v3/channels?part=snippet&forHandle=@heicoders&key=${process.env.YOUTUBE_API_KEY}`,
-        { signal: AbortSignal.timeout(10_000) }
-      )
-      results.youtube_status = r.status
-      results.youtube_ok = r.ok
-    } catch (e) {
-      results.youtube_ok = false
-      results.youtube_error = e instanceof Error ? e.message : String(e)
+    // Test 1: read competitors
+    const { data: competitors, error: compErr } = await supabase
+      .from('competitors')
+      .select('id, name')
+      .limit(1)
+    results.read_competitors_ok = !compErr
+    results.read_competitors_error = compErr?.message ?? null
+
+    // Test 2: read social_profiles
+    const { data: profiles, error: profErr } = await supabase
+      .from('social_profiles')
+      .select('id, platform, handle')
+      .eq('active', true)
+      .limit(1)
+    results.read_profiles_ok = !profErr
+    results.read_profiles_error = profErr?.message ?? null
+    results.first_profile = profiles?.[0] ? { platform: profiles[0].platform, handle: profiles[0].handle } : null
+
+    // Test 3: insert into social_metrics
+    if (competitors?.[0] && profiles?.[0]) {
+      const { error: insertErr } = await supabase.from('social_metrics').insert({
+        profile_id: profiles[0].id,
+        competitor_id: competitors[0].id,
+        platform: profiles[0].platform,
+        followers: null,
+        data_source: 'unavailable',
+        error_message: 'ping_test',
+      })
+      results.insert_ok = !insertErr
+      results.insert_error = insertErr?.message ?? null
+
+      // Clean up test row
+      if (!insertErr) {
+        await supabase.from('social_metrics')
+          .delete()
+          .eq('error_message', 'ping_test')
+          .eq('competitor_id', competitors[0].id)
+        results.cleanup_done = true
+      }
     }
+
+    // Test 4: try LinkedIn scrape (known to return 999)
+    try {
+      const linkedinRes = await fetch('https://www.linkedin.com/company/hustle-singapore', {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(10_000),
+      })
+      results.linkedin_status = linkedinRes.status
+      results.linkedin_ok = true
+    } catch (e) {
+      results.linkedin_ok = false
+      results.linkedin_error = e instanceof Error ? e.message : String(e)
+    }
+
+  } catch (e) {
+    results.fatal_error = e instanceof Error ? e.message : String(e)
   }
 
   return NextResponse.json({ ok: true, duration_ms: Date.now() - start, results })
