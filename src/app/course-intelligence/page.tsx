@@ -124,18 +124,20 @@ async function getData() {
   })
 
   // Sort purely by top course run count DESC (no Hustle pin — honest leaderboard)
-  rows.sort((a, b) => b.topRuns - a.topRuns)
+  // Only show providers where at least one course has a real run count
+  const activeRows = rows.filter(r => r.topRuns > 0)
+  activeRows.sort((a, b) => b.topRuns - a.topRuns)
 
-  const maxRuns   = rows[0]?.topRuns ?? 1
-  const hasRunData = maxRuns > 0
+  const maxRuns   = activeRows[0]?.topRuns ?? 1
+  const hasRunData = activeRows.length > 0
 
   return {
-    rows,
+    rows: activeRows,
     maxRuns,
     hasRunData,
     lastScraped,
     totalCourses: courses.length,
-    totalEntities: rows.length,
+    totalEntities: activeRows.length,
   }
 }
 
@@ -398,7 +400,7 @@ export default async function CourseIntelligencePage() {
 
         {/* ══ FOOTER ══ */}
         <footer className="text-[10px] font-mono text-slate-700 space-y-0.5 pb-4">
-          <p>SOURCE: MySkillsFuture Solr API · upcoming_run_count = doclist.numFound per course group (= &quot;Showing 1–X of <strong className="text-slate-600">N course runs</strong>&quot; on the Schedule tab)</p>
+          <p>SOURCE: MySkillsFuture Schedule tab · upcoming_run_count = &quot;Showing 1–X of <strong className="text-slate-600">N course runs</strong>&quot; scraped via browser navigation (Schedule data is AEM-rendered, requires authenticated session)</p>
           <p>HUSTLE SG = HUSTLE INSTITUTE PTE. LTD. + HUSTLE ACADEMY PTE. LTD. · {totalCourses} courses indexed · attendee counts from Course_Quality_NumberOfRespondents (verified)</p>
         </footer>
 
