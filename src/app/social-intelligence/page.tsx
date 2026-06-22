@@ -168,7 +168,7 @@ async function getData() {
       headline: '109 upcoming course runs',
       metric: '109',
       reason: 'Single course has 102 available dates — students see more BELLS slots and book BELLS first.',
-      action: 'Add more dates to Hustle's top courses',
+      action: "Add more dates to Hustle's top courses",
     },
     {
       competitor: intel.find(c => c.name.includes('InfoTech'))!,
@@ -199,7 +199,7 @@ async function getData() {
       level: 'MEDIUM',
       headline: '99 courses on SkillsFuture',
       metric: '99',
-      reason: 'Largest course catalogue — 7× Hustle's 14 courses. Students searching SkillsFuture find ASK first.',
+      reason: "Largest course catalogue — 7× Hustle's 14 courses. Students searching SkillsFuture find ASK first.",
       action: 'Expand course catalogue on SkillsFuture portal',
     },
   ].filter(t => t.competitor != null)
@@ -214,7 +214,7 @@ async function getData() {
     {
       severity: 'critical',
       text: 'InfoTech Academy concentrated 77 runs on a single AI course.',
-      subtext: 'Signals aggressive AI market capture. Direct threat to Hustle's training audience.',
+      subtext: "Signals aggressive AI market capture. Direct threat to Hustle's training audience.",
     },
     {
       severity: 'high',
@@ -228,7 +228,7 @@ async function getData() {
     },
     {
       severity: 'medium',
-      text: 'ASK Training lists 99 courses on SkillsFuture — 7× Hustle's catalogue.',
+      text: "ASK Training lists 99 courses on SkillsFuture — 7× Hustle's catalogue.",
       subtext: 'Broader catalogue = more search surface area on MySkillsFuture portal.',
     },
   ]
