@@ -77,7 +77,10 @@ export async function ingestAllSFCourses(): Promise<SFIngestionSummary> {
         quality_rating: c.rating,
         has_active_runs: c.hasActiveRuns,
         course_mode: c.modeOfTraining,
-        upcoming_run_count: c.upcomingRunCount,
+        // NOTE: upcoming_run_count is intentionally excluded from this upsert.
+        // The Solr API does not expose run counts (doclist.numFound is absent).
+        // Run counts are scraped separately via browser navigation (authenticated
+        // MySkillsFuture session required) and must never be overwritten here.
         source_api_url: sourceUrl,
         scraped_at,
       }))
