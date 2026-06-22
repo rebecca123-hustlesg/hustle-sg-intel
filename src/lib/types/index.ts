@@ -1,4 +1,4 @@
-export type Platform = 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'youtube'
+export type Platform = 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'youtube' | 'threads'
 export type DataSource = 'scraped' | 'api' | 'verified' | 'unavailable'
 export type Tier = 'High' | 'Mid' | 'Low'
 export type AlertSeverity = 'low' | 'medium' | 'high' | 'critical'

@@ -72,19 +72,34 @@ export async function ingestAllSocial(): Promise<OverallResult> {
         .limit(1)
         .maybeSingle()
 
-      // Insert new metric
+      const followerCount = result.data?.followers ?? result.data?.subscribers ?? null
+      const postsCount = result.data?.posts_count ?? result.data?.videos ?? null
+
+      // Insert into social_metrics (legacy, detailed)
       const { error: insertError } = await supabase.from('social_metrics').insert({
         profile_id: profile.id,
         competitor_id: competitor.id,
         platform: profile.platform,
-        followers: result.data?.followers ?? result.data?.subscribers ?? null,
+        followers: followerCount,
         following: result.data?.following ?? null,
-        posts_count:
-          result.data?.posts_count ?? result.data?.videos ?? null,
+        posts_count: postsCount,
         engagement_rate: null,
         data_source: result.success ? 'scraped' : 'unavailable',
         error_message: result.error,
       })
+
+      // Upsert into social_snapshots (new, for dashboard)
+      if (result.success && followerCount !== null) {
+        await supabase.from('social_snapshots').upsert({
+          competitor_id: competitor.id,
+          platform: profile.platform,
+          follower_count: followerCount,
+          total_posts: postsCount,
+          data_confidence: profile.platform === 'youtube' ? 'high' : 'medium',
+          snapshot_date: new Date().toISOString().split('T')[0],
+          scraped_at: new Date().toISOString(),
+        }, { onConflict: 'competitor_id,platform,snapshot_date' })
+      }
 
       if (insertError) {
         console.error(`Failed to insert metric for ${competitor.name} ${profile.platform}:`, insertError)
