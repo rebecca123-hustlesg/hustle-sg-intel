@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 
 interface AppLayoutProps {
   children: React.ReactNode
-  title: string
+  title?: string
   lastUpdated?: string | null
 }
 
@@ -13,27 +13,22 @@ export async function AppLayout({ children, title, lastUpdated }: AppLayoutProps
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Get unread alert count
-  const { count: unreadAlerts } = await supabase
-    .from('alerts')
-    .select('*', { count: 'exact', head: true })
-    .eq('is_read', false)
-    .eq('is_dismissed', false)
-
   const userEmail = user?.email ?? null
   const userInitial = userEmail ? userEmail[0].toUpperCase() : null
 
   return (
-    <div className="min-h-screen bg-background">
-      <Sidebar unreadAlerts={unreadAlerts ?? 0} />
-      <div className="ml-60">
+    <div className="min-h-screen bg-[#09090f]">
+      <Sidebar />
+      {/* Content: no left margin on mobile, 256px (w-64) on md+ */}
+      <div className="md:ml-64">
         <Header
-          title={title}
+          title={title ?? 'Intel'}
           lastUpdated={lastUpdated}
           userEmail={userEmail}
           userInitial={userInitial}
         />
-        <main className="p-6">
+        {/* Extra left padding on mobile to clear the hamburger button */}
+        <main className="p-6 pl-6 md:pl-6">
           {children}
         </main>
       </div>

@@ -7,13 +7,13 @@ import { RefreshCw, LogOut, User, ChevronDown } from 'lucide-react'
 import { formatRelativeTime } from '@/lib/utils'
 
 interface HeaderProps {
-  title: string
+  title?: string
   lastUpdated?: string | null
   userEmail?: string | null
   userInitial?: string | null
 }
 
-export function Header({ title, lastUpdated, userEmail, userInitial }: HeaderProps) {
+export function Header({ title = 'Intel', lastUpdated, userEmail, userInitial }: HeaderProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const router = useRouter()
   const supabase = createClient()
@@ -24,7 +24,7 @@ export function Header({ title, lastUpdated, userEmail, userInitial }: HeaderPro
   }
 
   return (
-    <header className="h-14 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-950/80 backdrop-blur sticky top-0 z-30">
+    <header className="h-14 border-b border-slate-800 flex items-center justify-between px-6 pl-14 md:pl-6 bg-[#09090f]/90 backdrop-blur sticky top-0 z-30">
       {/* Left: Page title */}
       <div className="flex items-center gap-3">
         <h1 className="text-base font-semibold text-white">{title}</h1>
