@@ -96,6 +96,17 @@ export interface Alert {
   metadata: Record<string, unknown> | null
 }
 
+export type GenerationSource = 'cron' | 'manual' | 'legacy'
+
+export interface InsightMetadata {
+  session_id: string
+  source: GenerationSource
+  duration_ms: number | null
+  generated_at: string
+  model: string | null
+  insight_count: number
+}
+
 export interface StrategicInsight {
   id: string
   insight_type: InsightType
@@ -107,6 +118,18 @@ export interface StrategicInsight {
   model_version: string | null
   created_at: string
   expires_at: string | null
+  metadata?: InsightMetadata | null
+}
+
+// A grouped AI generation run, derived from the metadata stamped on each insight.
+export interface GenerationSession {
+  session_id: string
+  generated_at: string
+  model: string | null
+  duration_ms: number | null
+  source: GenerationSource
+  insight_count: number
+  types: Record<string, number>
 }
 
 export interface User {

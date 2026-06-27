@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai'
-import type { StrategicInsight, SocialRankingEntry, JobPosting } from '@/lib/types'
+import type { StrategicInsight, SocialRankingEntry, JobPosting, GenerationSource } from '@/lib/types'
 
 const GEMINI_MODEL = 'gemini-2.5-flash'
 
@@ -107,6 +107,32 @@ Only output the JSON array, no other text, no markdown fences.`
     model_version: GEMINI_MODEL,
     expires_at: expiresAt,
   }))
+}
+
+/**
+ * Stamp a batch of freshly generated insight drafts with a shared Generation
+ * Session so each run is grouped and never overwritten. Session metadata is
+ * stored in the existing `strategic_insights.metadata` JSONB column (no schema
+ * change). Returns the generated session id alongside the stamped drafts.
+ */
+export function stampInsightsWithSession(
+  insights: InsightDraft[],
+  opts: { source: GenerationSource; durationMs: number }
+): { sessionId: string; generatedAt: string; insights: InsightDraft[] } {
+  const sessionId = crypto.randomUUID()
+  const generatedAt = new Date().toISOString()
+  const stamped = insights.map((insight) => ({
+    ...insight,
+    metadata: {
+      session_id: sessionId,
+      source: opts.source,
+      duration_ms: opts.durationMs,
+      generated_at: generatedAt,
+      model: insight.model_version ?? GEMINI_MODEL,
+      insight_count: insights.length,
+    },
+  }))
+  return { sessionId, generatedAt, insights: stamped }
 }
 
 export async function generateAlertSummary(alerts: string[]): Promise<string> {

@@ -1,13 +1,68 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { generateStrategicInsights } from '@/lib/services/ai/claude'
+import { generateStrategicInsights, stampInsightsWithSession } from '@/lib/services/ai/claude'
 import type { SocialRankingEntry, Competitor, Platform, SocialMetric } from '@/lib/types'
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
   const { searchParams } = new URL(request.url)
   const insightType = searchParams.get('type')
+  const scope = searchParams.get('scope')
+  const sessionId = searchParams.get('session')
   const limit = parseInt(searchParams.get('limit') ?? '20', 10)
+
+  // History: insights for one specific Generation Session (ignores expiry).
+  if (sessionId) {
+    let q = supabase
+      .from('strategic_insights')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (sessionId.startsWith('legacy:')) {
+      // Pre-feature rows have no stamped session_id; the history bucket key is a
+      // minute prefix (YYYY-MM-DDTHH:mm). Resolve it to that one-minute window.
+      const minute = sessionId.slice('legacy:'.length)
+      const start = new Date(`${minute}:00.000Z`)
+      const end = new Date(start.getTime() + 60_000)
+      q = q
+        .gte('created_at', start.toISOString())
+        .lt('created_at', end.toISOString())
+        .filter('metadata->>session_id', 'is', null)
+    } else {
+      q = q.filter('metadata->>session_id', 'eq', sessionId)
+    }
+
+    if (insightType) q = q.eq('insight_type', insightType)
+    const { data, error } = await q
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ data: data ?? [] })
+  }
+
+  // Dashboard: always the latest generation only (ignores expiry so the most
+  // recent run is always shown). Falls back to legacy behaviour if no run has
+  // session metadata yet.
+  if (scope === 'latest') {
+    const { data: newest, error: newestErr } = await supabase
+      .from('strategic_insights')
+      .select('metadata, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (newestErr) return NextResponse.json({ error: newestErr.message }, { status: 500 })
+
+    const latestSession = (newest?.[0]?.metadata as { session_id?: string } | null | undefined)?.session_id
+    if (latestSession) {
+      let q = supabase
+        .from('strategic_insights')
+        .select('*')
+        .filter('metadata->>session_id', 'eq', latestSession)
+        .order('created_at', { ascending: false })
+      if (insightType) q = q.eq('insight_type', insightType)
+      const { data, error } = await q
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ data: data ?? [] })
+    }
+    // Fall through to default behaviour for legacy rows without session metadata.
+  }
 
   let query = supabase
     .from('strategic_insights')
@@ -54,6 +109,7 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceSupabase = await createServiceClient()
+  const startTime = Date.now()
 
   try {
     // Gather intelligence data
@@ -141,17 +197,24 @@ export async function POST(request: NextRequest) {
       alerts: (recentAlerts ?? []).map((a: { title: string; description: string | null }) => `${a.title}: ${a.description ?? ''}`),
     })
 
+    // Group this manual run into a Generation Session (stored in metadata).
+    const generationMs = Date.now() - startTime
+    const { sessionId, insights: stampedInsights } = stampInsightsWithSession(insights, {
+      source: 'manual',
+      durationMs: generationMs,
+    })
+
     // Insert insights into DB
     const { data: inserted, error: insertError } = await serviceSupabase
       .from('strategic_insights')
-      .insert(insights)
+      .insert(stampedInsights)
       .select()
 
     if (insertError) {
       return NextResponse.json({ error: insertError.message }, { status: 500 })
     }
 
-    return NextResponse.json({ data: inserted, count: inserted?.length ?? 0 })
+    return NextResponse.json({ data: inserted, count: inserted?.length ?? 0, session_id: sessionId })
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

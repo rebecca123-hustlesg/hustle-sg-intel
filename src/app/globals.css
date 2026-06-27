@@ -51,6 +51,12 @@
 }
 
 @layer utilities {
+  /* Recolor the native date picker calendar icon to the indigo accent for dark theme visibility */
+  .date-input-accent::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: invert(58%) sepia(58%) saturate(2600%) hue-rotate(218deg) brightness(101%) contrast(96%);
+  }
+
   .data-unavailable {
     @apply font-mono text-xs text-yellow-500/80;
   }

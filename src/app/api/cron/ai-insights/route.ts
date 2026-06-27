@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
-import { generateStrategicInsights } from '@/lib/services/ai/claude'
+import { generateStrategicInsights, stampInsightsWithSession } from '@/lib/services/ai/claude'
 import type { SocialRankingEntry, Competitor, Platform, SocialMetric } from '@/lib/types'
 
 export const maxDuration = 300 // 5 minutes
@@ -104,10 +104,18 @@ export async function GET(request: Request) {
       ),
     })
 
+    // Group this run into a Generation Session (stored in metadata) so previous
+    // runs are never overwritten and remain queryable as history.
+    const generationMs = Date.now() - startTime
+    const { sessionId, insights: stampedInsights } = stampInsightsWithSession(insights, {
+      source: 'cron',
+      durationMs: generationMs,
+    })
+
     // Insert new insights
     const { data: inserted, error: insertError } = await supabase
       .from('strategic_insights')
-      .insert(insights)
+      .insert(stampedInsights)
       .select()
 
     if (insertError) {
@@ -117,6 +125,7 @@ export async function GET(request: Request) {
     const duration = Date.now() - startTime
     return NextResponse.json({
       success: true,
+      session_id: sessionId,
       insights_generated: inserted?.length ?? 0,
       duration_ms: duration,
       timestamp: new Date().toISOString(),
