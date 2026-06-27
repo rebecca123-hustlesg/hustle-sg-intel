@@ -9,12 +9,16 @@ import { formatRelativeTime } from '@/lib/utils'
 interface HeaderProps {
   title?: string
   lastUpdated?: string | null
+  module?: string
   userEmail?: string | null
   userInitial?: string | null
 }
 
-export function Header({ title = 'Intel', lastUpdated, userEmail, userInitial }: HeaderProps) {
+export function Header({ title = 'Intel', lastUpdated, module, userEmail, userInitial }: HeaderProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [justRefreshed, setJustRefreshed] = useState(false)
   const router = useRouter()
   const supabase = createClient()
 
@@ -23,16 +27,61 @@ export function Header({ title = 'Intel', lastUpdated, userEmail, userInitial }:
     router.push('/auth/login')
   }
 
+  const handleRefresh = async () => {
+    if (!module || refreshing) return
+    setRefreshing(true)
+    setRefreshError(null)
+    try {
+      const res = await fetch(`/api/refresh?module=${encodeURIComponent(module)}`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error || `Refresh failed (${res.status})`)
+      }
+      setJustRefreshed(true)
+      router.refresh()
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : 'Refresh failed')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
     <header className="h-14 border-b border-slate-800 flex items-center justify-between px-6 pl-14 md:pl-6 bg-[#09090f]/90 backdrop-blur sticky top-0 z-30">
       {/* Left: Page title */}
       <div className="flex items-center gap-3">
         <h1 className="text-base font-semibold text-white">{title}</h1>
         {lastUpdated && (
-          <span className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500">
-            <RefreshCw className="h-3 w-3" />
-            Updated {formatRelativeTime(lastUpdated)}
-          </span>
+          module ? (
+            <span className="hidden sm:flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Refresh data"
+                className="flex items-center gap-1.5 text-slate-500 hover:text-slate-300 transition-colors disabled:cursor-not-allowed disabled:opacity-80"
+              >
+                <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing
+                  ? 'Updating…'
+                  : justRefreshed
+                    ? 'Updated just now'
+                    : `Updated ${formatRelativeTime(lastUpdated)}`}
+              </button>
+              {refreshError && (
+                <span className="text-red-400 max-w-[220px] truncate" title={refreshError}>
+                  {refreshError}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500">
+              <RefreshCw className="h-3 w-3" />
+              Updated {formatRelativeTime(lastUpdated)}
+            </span>
+          )
         )}
       </div>
 

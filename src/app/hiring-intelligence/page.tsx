@@ -104,7 +104,7 @@ export default async function HiringIntelligencePage() {
   const { jobs, competitors, velocityMap, sourceMap, lastUpdated } = await getHiringData()
 
   return (
-    <AppLayout title="Hiring Intelligence" lastUpdated={lastUpdated}>
+    <AppLayout title="Hiring Intelligence" lastUpdated={lastUpdated} module="hiring">
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4">

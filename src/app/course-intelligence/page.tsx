@@ -202,7 +202,7 @@ export default async function CourseIntelligencePage() {
   const podium = rows.slice(0, 3)
 
   return (
-    <AppLayout title="MySkillsFuture Intelligence" lastUpdated={runCountCapturedAt}>
+    <AppLayout title="MySkillsFuture Intelligence" lastUpdated={runCountCapturedAt} module="courses">
       <div className="space-y-6">
 
         {/* ══ STATUS ROW ══ */}

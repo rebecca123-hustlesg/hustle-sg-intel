@@ -345,7 +345,7 @@ export default async function SocialIntelligencePage() {
   }
 
   return (
-    <AppLayout title="Social Intelligence" lastUpdated={sgDate}>
+    <AppLayout title="Social Intelligence" lastUpdated={sgDate} module="social">
       <div className="space-y-8 max-w-full">
 
         {/* ─── SECTION 1: MARKET THREAT RADAR ─────────────────────────────── */}

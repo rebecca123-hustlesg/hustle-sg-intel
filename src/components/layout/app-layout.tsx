@@ -6,9 +6,10 @@ interface AppLayoutProps {
   children: React.ReactNode
   title?: string
   lastUpdated?: string | null
+  module?: string
 }
 
-export async function AppLayout({ children, title, lastUpdated }: AppLayoutProps) {
+export async function AppLayout({ children, title, lastUpdated, module }: AppLayoutProps) {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -24,6 +25,7 @@ export async function AppLayout({ children, title, lastUpdated }: AppLayoutProps
         <Header
           title={title ?? 'Intel'}
           lastUpdated={lastUpdated}
+          module={module}
           userEmail={userEmail}
           userInitial={userInitial}
         />
