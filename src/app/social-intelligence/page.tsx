@@ -14,6 +14,7 @@ import type { ReactNode } from 'react'
 import { Instagram, Facebook, Linkedin, Youtube } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { AppLayout } from '@/components/layout/app-layout'
+import { buildFollowerMaps, buildSocialRanking } from '@/lib/services/queries/social'
 
 export const revalidate = 300
 
@@ -71,40 +72,10 @@ async function getData() {
   const alerts = alertRes.data ?? []
   const profiles = profileRes.data ?? []
 
-  // ── YouTube data (only verified live data) ──────────────────────────────────
-  const ytMap = new Map<string, { subscribers: number | null; videos: number | null }>()
-  const seenYT = new Set<string>()
-  for (const s of snapshots) {
-    if (s.platform !== 'youtube' || seenYT.has(s.competitor_id)) continue
-    seenYT.add(s.competitor_id)
-    ytMap.set(s.competitor_id, {
-      subscribers: s.follower_count,
-      videos: s.total_posts,
-    })
-  }
-
-  // ── Latest follower snapshot per competitor + platform ──────────────────────
-  // snapshots are ordered snapshot_date desc, so the first row seen per
-  // (competitor, platform) key is the most recent verified value.
-  const followerMap = new Map<string, number | null>()
-  const seenFollowerKey = new Set<string>()
-  for (const s of snapshots) {
-    const key = `${s.competitor_id}:${s.platform}`
-    if (seenFollowerKey.has(key)) continue
-    seenFollowerKey.add(key)
-    followerMap.set(key, s.follower_count)
-  }
-
-  // ── Previous follower snapshot per competitor + platform ────────────────────
-  // The 2nd row seen per key (snapshots still ordered desc) = the prior day's
-  // verified value. Enables 24h growth deltas computed entirely from history.
-  const prevFollowerMap = new Map<string, number | null>()
-  const seenLatestKey = new Set<string>()
-  for (const s of snapshots) {
-    const key = `${s.competitor_id}:${s.platform}`
-    if (!seenLatestKey.has(key)) { seenLatestKey.add(key); continue }
-    if (!prevFollowerMap.has(key)) prevFollowerMap.set(key, s.follower_count)
-  }
+  // ── Follower maps (latest YT, latest & previous follower snapshot per key) ──
+  // Extracted to the shared social query layer so the Dashboard reuses the exact
+  // same selection rules. snapshots are ordered snapshot_date desc.
+  const { ytMap, followerMap, prevFollowerMap } = buildFollowerMaps(snapshots)
 
   // ── Public profile URL per competitor + platform ────────────────────────────
   // Sourced from social_profiles so leaderboard metrics can link out to the
@@ -223,17 +194,15 @@ async function getData() {
     }
   })
 
-  // ── Market leaderboard: sort by YouTube subs desc (live) ────────────────────
-  const audienceBoard = [...intel].sort((a, b) => {
-    if (a.totalAudience !== null && b.totalAudience !== null)
-      return b.totalAudience - a.totalAudience
-    if (a.totalAudience !== null) return -1
-    if (b.totalAudience !== null) return 1
-    return 0
-  })
+  // ── Market leaderboard: shared ranking (total audience desc, no-data last) ──
+  // Derived from buildSocialRanking so the Dashboard's Social Reach ranking and
+  // Hustle rank are computed from the identical ordering as this page.
+  const ranking = buildSocialRanking(competitors, snapshots)
+  const intelById = new Map(intel.map(i => [i.id, i]))
+  const audienceBoard = ranking.map(r => intelById.get(r.competitor_id)!).filter(Boolean)
 
   const hustleIntel = intel.find(c => c.isHustle) ?? null
-  const hustleAudienceRank = audienceBoard.findIndex(c => c.isHustle)
+  const hustleAudienceRank = ranking.findIndex(r => r.is_hustle)
 
   // ── Course rank for Hustle vs Market ──────────────────────────────────────
   const courseRanked = [...intel].sort((a, b) => b.courseTotal - a.courseTotal)
