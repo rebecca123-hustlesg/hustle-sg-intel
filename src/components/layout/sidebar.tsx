@@ -14,11 +14,25 @@ import {
   Menu,
   X,
   ChevronRight,
+  LayoutDashboard,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // ─── Nav structure ────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
+  {
+    label:    'Dashboard',
+    href:     '/dashboard',
+    icon:     LayoutDashboard,
+    question: 'Where do we stand overall?',
+    // Tailwind colour tokens — must be complete class strings (not dynamic)
+    dot:      'bg-indigo-400',
+    iconActive:   'text-indigo-400',
+    iconInactive: 'text-indigo-600',
+    border:   'border-l-indigo-400',
+    bg:       'bg-indigo-400/8',
+    labelActive: 'text-indigo-300',
+  },
   {
     label:    'Social Media Intel',
     href:     '/social-intelligence',
