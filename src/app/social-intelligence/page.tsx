@@ -535,6 +535,11 @@ export default async function SocialIntelligencePage() {
         </section>
 
         {/* ─── SECTION 4: CONTENT THEMES ──────────────────────────────────── */}
+        {/* TEMPORARILY HIDDEN: this section is wrapped in `{false && ( … )}` so it
+            does not render. Nothing was deleted — all data fetching, helpers and
+            JSX remain intact. To RESTORE: delete the `{false && (` line directly
+            below and its matching `)}` line at the end of this <section>. */}
+        {false && (
         <section>
           <H2 sub="What topics is each competitor investing in? Classified from known positioning and public content.">
             Content Themes
@@ -578,8 +583,14 @@ export default async function SocialIntelligencePage() {
             })}
           </div>
         </section>
+        )}
 
         {/* ─── SECTION 5: GROWTH ALERTS ───────────────────────────────────── */}
+        {/* TEMPORARILY HIDDEN: this section is wrapped in `{false && ( … )}` so it
+            does not render. Nothing was deleted — all alert generation, data and
+            JSX remain intact. To RESTORE: delete the `{false && (` line directly
+            below and its matching `)}` line at the end of this <section>. */}
+        {false && (
         <section>
           <H2 sub="Signals detected from competitor activity. Updated daily.">
             Growth Alerts
@@ -599,8 +610,7 @@ export default async function SocialIntelligencePage() {
               )
             })}
           </div>
-        </section>
-
+        </section>        )}
         {/* ─── SECTION 6: HUSTLE VS MARKET ────────────────────────────────── */}
         <section>
           <H2 sub="Where does Hustle SG stand today? What needs to change?">
