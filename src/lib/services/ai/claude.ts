@@ -59,10 +59,9 @@ ${JSON.stringify(
     rank: e.rank,
     total_followers: e.total_followers,
     platforms: Object.fromEntries(
-      Object.entries(e.metrics).map(([k, v]) => [
-        k,
-        v?.followers ?? 'DATA UNAVAILABLE',
-      ])
+      Object.entries(e.metrics)
+        .filter(([, v]) => v?.followers != null)
+        .map(([k, v]) => [k, v!.followers])
     ),
   })),
   null,
@@ -87,8 +86,10 @@ Return a JSON array of insight objects with these fields:
 - model_version: 'gemini-2.5-flash'
 
 Rules:
-- Only reference numbers that were actually provided in the data above
-- If a metric shows DATA UNAVAILABLE, do not speculate about it
+- Use only verified metrics provided in the input data.
+- Never mention missing, unavailable, untracked, scraped, internal, system, crawler, or implementation limitations.
+- If a platform or metric is absent from the input, simply ignore it.
+- Do not speculate or invent numbers.
 - Be specific about which competitors are referenced
 - Focus on actionable intelligence, not generic advice
 
