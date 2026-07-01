@@ -1,5 +1,6 @@
 import type { ScraperResult } from '@/lib/types'
 import { withBrowser } from '@/lib/services/scraper/browser'
+import { companyMatches } from '@/lib/services/jobs/employer'
 import type { Page } from 'puppeteer-core'
 
 interface JobStreetJob {
@@ -23,28 +24,6 @@ interface JobStreetJob {
 // `data-automation` test hooks. We load the page with the shared stealth
 // browser service and read the structured JSON first, falling back to the
 // data-automation DOM nodes — never brittle CSS class selectors.
-
-const GENERIC_COMPANY_TOKENS = new Set([
-  'pte', 'ltd', 'llp', 'inc', 'limited', 'the', 'and', 'academy', 'institute',
-  'training', 'school', 'college', 'singapore', 'sg', 'co', 'company', 'group',
-])
-
-function significantTokens(s: string): string[] {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length > 1 && !GENERIC_COMPANY_TOKENS.has(t))
-}
-
-/** Loose, suffix-insensitive company match (e.g. "Vertical Institute Pte Ltd"). */
-function companyMatches(competitor: string, company: string | null | undefined): boolean {
-  if (!company) return false
-  const wanted = significantTokens(competitor)
-  if (wanted.length === 0) return true // nothing distinctive to match on — keep it
-  const have = new Set(significantTokens(company))
-  return wanted.some((t) => have.has(t))
-}
 
 function parseSalaryLabel(label: string | null | undefined): {
   salary_min: number | null
@@ -129,35 +108,43 @@ function mapReduxJob(j: ReduxJob): JobStreetJob | null {
   }
 }
 
+/** Extraction result: how many raw postings the page yielded (pre-validation)
+ * and the subset whose employer positively matched the competitor. */
+interface ExtractResult {
+  fetched: number
+  matched: JobStreetJob[]
+}
+
 /** Primary path: structured jobs from the embedded SEEK_REDUX_DATA JSON. */
-function extractFromRedux(html: string, companyName: string): JobStreetJob[] {
+function extractFromRedux(html: string, companyName: string): ExtractResult {
   const marker = html.indexOf('SEEK_REDUX_DATA')
-  if (marker === -1) return []
+  if (marker === -1) return { fetched: 0, matched: [] }
   const start = html.indexOf('{', marker)
-  if (start === -1) return []
+  if (start === -1) return { fetched: 0, matched: [] }
   const jsonStr = matchBraces(html, start)
-  if (!jsonStr) return []
+  if (!jsonStr) return { fetched: 0, matched: [] }
 
   let data: { results?: { results?: { jobs?: ReduxJob[] } } }
   try {
     data = JSON.parse(jsonStr)
   } catch {
-    return []
+    return { fetched: 0, matched: [] }
   }
   const jobs = data?.results?.results?.jobs
-  if (!Array.isArray(jobs)) return []
+  if (!Array.isArray(jobs)) return { fetched: 0, matched: [] }
 
   const mapped = jobs.map(mapReduxJob).filter((j): j is JobStreetJob => j !== null)
+  // Fail closed: only keep postings whose employer positively matches the
+  // competitor. If nothing matches, this competitor has no JobStreet jobs —
+  // never fall back to the unrelated keyword-search results.
   const matched = mapped.filter((j) =>
     companyMatches(companyName, j.raw_data.companyName as string | null)
   )
-  // If a company filter would drop everything, the keyword search results are
-  // still the best signal we have — keep them rather than returning nothing.
-  return matched.length > 0 ? matched : mapped
+  return { fetched: mapped.length, matched }
 }
 
 /** Fallback path: SEEK's stable `data-automation` DOM hooks (not CSS classes). */
-async function extractFromDom(page: Page, companyName: string): Promise<JobStreetJob[]> {
+async function extractFromDom(page: Page, companyName: string): Promise<ExtractResult> {
   const raw = await page.evaluate(() => {
     const cards = Array.from(
       document.querySelectorAll('[data-automation="normalJob"], article[data-card-type]')
@@ -216,31 +203,122 @@ async function extractFromDom(page: Page, companyName: string): Promise<JobStree
     }
   })
 
+  // Fail closed: same employer-match rule as the JSON path — no match, no jobs.
   const matched = mapped.filter((j) =>
     companyMatches(companyName, j.raw_data.companyName as string | null)
   )
-  return matched.length > 0 ? matched : mapped
+  return { fetched: mapped.length, matched }
+}
+
+// Bounded pagination for the JobStreet keyword search. JobStreet returns only
+// one page (~20-30 results) per request, so a single-page scrape silently
+// dropped every posting beyond page 1. We now walk pages 1..MAX_PAGES in the
+// SAME browser session, reusing the existing extractors and company filter, and
+// stop early when a page yields no new usable jobs.
+const MAX_PAGES = 5
+// Pacing between page navigations to reduce bot-detection risk.
+const PAGE_DELAY_MS = 1500
+
+// Some competitors post on JobStreet under a different legal/employer name than
+// the display name we track. The alias is used ONLY to build the JobStreet
+// search URL — the company filter (companyMatches) still runs against the real
+// competitor name, and the UI display name is never affected.
+// Keyed by the competitor's display name.
+const JOBSTREET_SEARCH_ALIASES: Record<string, string> = {
+  'Hustle SG': 'Hustle Institute',
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Stable identity for a scraped job, used only to de-duplicate page overlaps
+ * (e.g. an out-of-range page echoing page 1) — NOT the ingestion/read dedup. */
+function jobIdentity(job: JobStreetJob): string {
+  const id = job.raw_data?.id
+  if (id != null && id !== '') return `id:${String(id)}`
+  if (job.source_url) return `url:${job.source_url}`
+  return `title:${job.title.toLowerCase().trim()}`
 }
 
 export async function scrapeJobStreet(
   companyName: string
 ): Promise<ScraperResult<JobStreetJob[]>> {
   const scraped_at = new Date().toISOString()
-  const url = `https://sg.jobstreet.com/jobs?keywords=${encodeURIComponent(companyName)}`
+  // Alias affects ONLY the search keyword; companyMatches still filters against
+  // the real competitor name (companyName), so matching behaviour is unchanged.
+  const searchTerm = JOBSTREET_SEARCH_ALIASES[companyName] ?? companyName
+  if (searchTerm !== companyName) {
+    console.log(
+      `[jobstreet] Using search alias "${searchTerm}" for competitor "${companyName}"`
+    )
+  }
+  const baseUrl = `https://sg.jobstreet.com/jobs?keywords=${encodeURIComponent(searchTerm)}`
 
   try {
     const jobs = await withBrowser(async (page) => {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-      // The listing data is server-rendered, but wait briefly for the job nodes
-      // so the DOM fallback is reliable if the embedded JSON shape ever changes.
-      await page
-        .waitForSelector('[data-automation="jobTitle"]', { timeout: 15_000 })
-        .catch(() => {})
+      const collected: JobStreetJob[] = []
+      const seen = new Set<string>()
+      let totalFetched = 0
+      let totalRejected = 0
 
-      const html = await page.content()
-      const fromJson = extractFromRedux(html, companyName)
-      if (fromJson.length > 0) return fromJson
-      return extractFromDom(page, companyName)
+      for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+        const pageUrl = pageNum === 1 ? baseUrl : `${baseUrl}&page=${pageNum}`
+
+        if (pageNum > 1) await sleep(PAGE_DELAY_MS)
+
+        await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 })
+        // The listing data is server-rendered, but wait briefly for the job
+        // nodes so the DOM fallback is reliable if the JSON shape ever changes.
+        await page
+          .waitForSelector('[data-automation="jobTitle"]', { timeout: 15_000 })
+          .catch(() => {})
+
+        const html = await page.content()
+        const fromJson = extractFromRedux(html, companyName)
+        // Only fall back to the DOM when the JSON path yielded NO raw postings
+        // (structure changed) — not when postings existed but were all rejected.
+        const pageResult =
+          fromJson.fetched > 0 ? fromJson : await extractFromDom(page, companyName)
+        const pageJobs = pageResult.matched
+
+        totalFetched += pageResult.fetched
+        totalRejected += pageResult.fetched - pageResult.matched.length
+
+        // No raw postings on this page → we've run past the last page.
+        if (pageResult.fetched === 0) {
+          break
+        }
+
+        let kept = 0
+        for (const job of pageJobs) {
+          const key = jobIdentity(job)
+          if (seen.has(key)) continue
+          seen.add(key)
+          collected.push(job)
+          kept++
+        }
+
+        // Nothing on this page survived validation → this competitor has no
+        // JobStreet jobs on this page; stop rather than paging unrelated noise.
+        if (pageJobs.length === 0) {
+          break
+        }
+
+        // Every validated job was already seen (e.g. an out-of-range page
+        // echoing an earlier page) → no forward progress, stop.
+        if (kept === 0) {
+          break
+        }
+      }
+
+      console.log(
+        `[JobStreet]\nCompetitor: ${companyName}\n\n` +
+          `Fetched: ${totalFetched}\nValidated: ${collected.length}\nRejected: ${totalRejected}` +
+          (totalRejected > 0 ? `\n\nReason:\nEmployer mismatch` : '')
+      )
+
+      return collected
     })
 
     return {
@@ -248,7 +326,7 @@ export async function scrapeJobStreet(
       data: jobs,
       error: null,
       scraped_at,
-      source: url,
+      source: baseUrl,
     }
   } catch (err) {
     return {
@@ -256,7 +334,7 @@ export async function scrapeJobStreet(
       data: null,
       error: err instanceof Error ? err.message : String(err),
       scraped_at,
-      source: url,
+      source: baseUrl,
     }
   }
 }

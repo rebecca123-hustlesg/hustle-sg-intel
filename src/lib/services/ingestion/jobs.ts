@@ -3,6 +3,7 @@ import { scrapeMyCareersFuture } from '@/lib/services/jobs/mycareersfuture'
 import { scrapeJobStreet } from '@/lib/services/jobs/jobstreet'
 import { scrapeIndeed } from '@/lib/services/jobs/indeed'
 import { scrapeCareerPage } from '@/lib/services/jobs/career_pages'
+import { companyMatches, getEmployerName } from '@/lib/services/jobs/employer'
 
 interface JobIngestionResult {
   competitor_id: string
@@ -75,7 +76,21 @@ export async function ingestAllJobs(): Promise<OverallJobResult> {
   let totalDeduplicated = 0
 
   for (const competitor of competitors) {
-    // Collect every source's results first, preserving the SOURCE_ORDER above.
+    // Per-competitor purge: deactivate ONLY this competitor's previous JobStreet
+    // and MyCareersFuture rows before re-scraping, so the refresh rebuilds those
+    // two sources from freshly validated data. Scoped per competitor (never
+    // global) so a single scraper failure can't wipe the whole dataset. Career
+    // Page and Indeed rows are left untouched.
+    await supabase
+      .from('job_postings')
+      .update({ is_active: false })
+      .eq('competitor_id', competitor.id)
+      .eq('is_active', true)
+      .in('source', ['jobstreet', 'mycareersfuture'])
+
+    // Collect every source's results first. The order of the source list built
+    // below (mycareersfuture → career_page → jobstreet → indeed) is also the
+    // cross-source dedup priority: the first source to report a title owns it.
     const mcfResult = await scrapeMyCareersFuture(competitor.name)
     await delay(2000)
     const careerResult = await scrapeCareerPage(competitor.website, competitor.name)
@@ -101,6 +116,14 @@ export async function ingestAllJobs(): Promise<OverallJobResult> {
 
     for (const { name, jobs } of sources) {
       for (const job of jobs) {
+        // Final employer-validation gate for the keyword sources. Even though the
+        // scrapers already validate, re-check here so nothing unverified is ever
+        // inserted. Fail closed: missing/mismatched employer ⇒ skip. Career Page
+        // and Indeed jobs pass through unchanged.
+        if (name === 'jobstreet' || name === 'mycareersfuture') {
+          const employer = getEmployerName(name, job.raw_data)
+          if (!companyMatches(competitor.name, employer)) continue
+        }
         const key = normalizeJobTitle(job.title)
         if (!key) continue
         const entry: JobSourceEntry = {

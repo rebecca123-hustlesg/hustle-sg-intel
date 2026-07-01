@@ -28,6 +28,39 @@ const CAREERS_PATH_CANDIDATES = [
   '/opportunities',
 ]
 
+// Per-competitor career-page URL overrides. Some competitors publish jobs on a
+// domain/path that the generic discovery below cannot reach (e.g. a wrong
+// seeded domain, or a /careers path that redirects to the homepage). When an
+// override exists it is fetched directly and the generic path discovery is
+// skipped for that competitor only — everyone else is unaffected. Keyed by the
+// competitor's display name.
+const CAREER_PAGE_OVERRIDES: Record<string, string> = {
+  'InfoTech Academy': 'https://www.info-tech.com.sg/career',
+}
+
+// Fetch a single known career-page URL directly (used for CAREER_PAGE_OVERRIDES).
+async function fetchCareerUrl(url: string): Promise<{ html: string; url: string } | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      next: { revalidate: 0 },
+    })
+    if (res.ok) {
+      const html = await res.text()
+      return { html, url }
+    }
+  } catch {
+    // fall through to null
+  }
+  return null
+}
+
 async function fetchCareerPage(website: string): Promise<{ html: string; url: string } | null> {
   const base = website.startsWith('http') ? website : `https://${website}`
 
@@ -91,6 +124,27 @@ const REJECT_TITLE_PATTERNS: RegExp[] = [
 const ROLE_KEYWORD_RE =
   /\b(trainer|instructor|teacher|tutor|lecturer|executive|manager|consultant|specialist|designer|developer|engineer|analyst|sales|marketing|content creator|copywriter|editor|producer|business development|finance|accountant|operations|coordinator|director|administrator|admin|officer|associate|recruiter|human resource|hr|strategist|assistant|technician|architect|scientist|advisor|planner|representative|supervisor|intern)\b/i
 
+// Responsibility/requirement/qualification signals for the UNSTRUCTURED paths
+// only. Job-description bullet lines frequently contain a role keyword (e.g.
+// "sales", "marketing") yet are not titles. These words never appear in a
+// genuine short job title, so they are safe to reject here.
+const NON_TITLE_PATTERNS: RegExp[] = [
+  /\bKPIs?\b/i, // metrics ("... sales targets and KPIs")
+  /\bfamiliarity\b/i, // requirement ("Familiarity with ...")
+  /\bunderstanding\b/i, // requirement ("Good understanding of ...")
+  /\b(?:bachelor|master)'?s?\b/i, // qualification ("Bachelor's degree ...")
+  /\b(?:degree|diploma)\b/i, // qualification ("... degree in marketing")
+  /related field/i, // qualification ("... or related field")
+  /\bspectrum\b/i, // responsibility ("... full spectrum of ...")
+]
+
+// Genuine job titles do not begin with an imperative verb; responsibility
+// bullets do ("Prepare ...", "Track ...", "Develop ..."). "support" is
+// deliberately excluded because it legitimately starts real titles
+// (e.g. "Support Engineer").
+const RESPONSIBILITY_LEAD_RE =
+  /^(?:prepare|track|provide|coordinate|meet|develop|ensure|conduct|assist|handle|achieve|maintain|liaise|generate|identify|monitor|oversee|perform|execute|deliver|drive|build|create|collaborate|respond|process|update|review)\b/i
+
 /** True for paragraphs, sentences, and perk/benefit/marketing lines. */
 function isRejectedTitle(title: string): boolean {
   const t = title.trim()
@@ -105,6 +159,8 @@ function isRejectedTitle(title: string): boolean {
 function looksLikeRole(title: string): boolean {
   const t = title.trim()
   if (isRejectedTitle(t)) return false
+  if (RESPONSIBILITY_LEAD_RE.test(t)) return false
+  if (NON_TITLE_PATTERNS.some((re) => re.test(t))) return false
   return ROLE_KEYWORD_RE.test(t)
 }
 
@@ -257,7 +313,14 @@ export async function scrapeCareerPage(
   const scraped_at = new Date().toISOString()
 
   try {
-    const result = await fetchCareerPage(website)
+    const override = CAREER_PAGE_OVERRIDES[competitorName]
+    let result: { html: string; url: string } | null
+    if (override) {
+      console.log(`[career] Using override URL for competitor "${competitorName}"`)
+      result = await fetchCareerUrl(override)
+    } else {
+      result = await fetchCareerPage(website)
+    }
     if (!result) {
       return {
         success: false,

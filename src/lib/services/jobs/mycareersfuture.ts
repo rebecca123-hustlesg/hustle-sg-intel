@@ -1,4 +1,5 @@
 import type { ScraperResult } from '@/lib/types'
+import { companyMatches } from '@/lib/services/jobs/employer'
 
 interface MCFJob {
   title: string
@@ -33,6 +34,15 @@ interface MCFAPIJob {
   company: {
     name: string
     registrationNumber: string
+  }
+  // Actual employer on MyCareersFuture v2. `postedCompany` is the advertiser;
+  // `hiringCompany` is populated for agency-posted roles. Used for employer
+  // validation so unrelated companies are never attributed to a competitor.
+  postedCompany?: {
+    name?: string
+  }
+  hiringCompany?: {
+    name?: string
   }
   metadata: {
     newPostingDate: string
@@ -90,7 +100,23 @@ export async function scrapeMyCareersFuture(
       throw new Error('MCF API returned unexpected response format')
     }
 
-    const jobs: MCFJob[] = data.results.map((job: MCFAPIJob) => ({
+    // Fail closed: keep only postings whose employer positively matches the
+    // competitor. Missing/unverifiable employer ⇒ discarded.
+    const fetched = data.results
+    const validated = fetched.filter((job) =>
+      companyMatches(
+        companyName,
+        job.postedCompany?.name ?? job.hiringCompany?.name ?? null
+      )
+    )
+    const rejected = fetched.length - validated.length
+    console.log(
+      `[MyCareersFuture]\nCompetitor: ${companyName}\n\n` +
+        `Fetched: ${fetched.length}\nValidated: ${validated.length}\nRejected: ${rejected}` +
+        (rejected > 0 ? `\n\nReason:\nEmployer mismatch` : '')
+    )
+
+    const jobs: MCFJob[] = validated.map((job: MCFAPIJob) => ({
       title: job.title,
       department:
         job.categories?.map((c) => c.description).join(', ') || null,
