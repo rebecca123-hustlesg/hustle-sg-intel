@@ -25,9 +25,10 @@ export type SeoCategory =
   | 'missing_content_category'
   | 'search_growth'
 // Which intelligence surface a generation belongs to. Stored in metadata so
-// Opportunity Engine (strategic) and Search Intelligence (seo) insights share
-// the same strategic_insights table without colliding. Absent = strategic.
-export type InsightModule = 'strategic' | 'seo'
+// Opportunity Engine (strategic), Search Intelligence (seo) and the Social
+// Intelligence "Hustle vs Market" recommendation (positioning) share the same
+// strategic_insights table without colliding. Absent = strategic.
+export type InsightModule = 'strategic' | 'seo' | 'positioning'
 export type UserRole = 'admin' | 'analyst' | 'viewer'
 
 export interface Competitor {

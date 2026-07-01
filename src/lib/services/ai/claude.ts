@@ -257,6 +257,73 @@ export function stampInsightsWithSession(
   return { sessionId, generatedAt, insights: stamped }
 }
 
+/**
+ * Live facts for the Social Intelligence "Hustle vs Market" recommendation.
+ * Both fields use the SAME canonical live sources as the page cards: the social
+ * ranking comes from social_snapshots (shared buildSocialRanking logic) and
+ * courseCount is the SUM of sf_courses.upcoming_run_count per competitor. Legacy
+ * social_metrics / course_catalog are intentionally not used here.
+ */
+export interface HustlePositioningPayload {
+  socialRanking: { name: string; is_hustle: boolean; rank: number; total_followers: number }[]
+  courseCount: Record<string, number>
+}
+
+/**
+ * Generate the single "Hustle vs Market" strategic recommendation shown on the
+ * Social Intelligence page. Reuses the same Gemini client and model as every
+ * other generator (no new AI provider). Returns a plain-text draft (no markdown,
+ * like {@link generateAlertSummary}) so the page can render it as-is. The cron
+ * persists it to strategic_insights tagged metadata.module='positioning'.
+ */
+export async function generateHustleRecommendation(
+  payload: HustlePositioningPayload
+): Promise<InsightDraft> {
+  const prompt = `You are a competitive intelligence analyst for Hustle SG, a Singapore training and upskilling company.
+
+Using ONLY the live data below, write a concise strategic recommendation for Hustle SG's leadership.
+
+SOCIAL AUDIENCE RANKING (rank 1 = largest tracked audience):
+${JSON.stringify(payload.socialRanking, null, 2)}
+
+UPCOMING COURSE RUNS PER COMPETITOR (sum of upcoming MySkillsFuture run counts):
+${JSON.stringify(payload.courseCount, null, 2)}
+
+Write 2-3 short paragraphs that cover, in flowing prose:
+- the single biggest strategic opportunity for Hustle SG
+- Hustle SG's biggest competitive weakness
+- the strongest competitor to watch and why
+- one recommended next action
+- one suggested content direction
+
+Rules:
+- Hustle SG is the company flagged is_hustle:true in the data.
+- Only reference competitor names and numbers that actually appear in the data above.
+- Be specific and actionable; avoid generic advice.
+- Keep it under 140 words total.
+- Plain text only — no markdown, no headings, no bullet points, no lists.
+
+Output only the recommendation text.`
+
+  const response = await getClient().models.generateContent({
+    model: GEMINI_MODEL,
+    contents: prompt,
+  })
+
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+
+  return {
+    insight_type: 'recommendation',
+    title: 'Hustle vs Market — Strategic Recommendation',
+    body: (response.text ?? '').trim(),
+    severity: 'medium',
+    competitor_ids: null,
+    generated_by: 'gemini',
+    model_version: GEMINI_MODEL,
+    expires_at: expiresAt,
+  }
+}
+
 export async function generateAlertSummary(alerts: string[]): Promise<string> {
   if (alerts.length === 0) return 'No recent alerts to summarize.'
 

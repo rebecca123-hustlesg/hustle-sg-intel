@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
-import { generateStrategicInsights, stampInsightsWithSession } from '@/lib/services/ai/claude'
+import { generateStrategicInsights, generateHustleRecommendation, stampInsightsWithSession } from '@/lib/services/ai/claude'
+import { buildSocialRanking } from '@/lib/services/queries/social'
 import type { SocialRankingEntry, Competitor, Platform, SocialMetric } from '@/lib/types'
 
 export const maxDuration = 300 // 5 minutes
@@ -122,11 +123,74 @@ export async function GET(request: Request) {
       throw new Error(`Failed to insert insights: ${insertError.message}`)
     }
 
+    // Hustle vs Market positioning recommendation. Built from the SAME canonical
+    // live sources as the Social Intelligence page cards so the recommendation
+    // matches what's displayed: social ranking from social_snapshots (the shared
+    // buildSocialRanking logic that getSocialRanking wraps — used directly here
+    // with the service client so it works under the cron's RLS context) and
+    // course numbers from sf_courses.upcoming_run_count SUMmed per competitor.
+    // Legacy social_metrics / course_catalog are intentionally NOT used here.
+    // Same Gemini client + stampInsightsWithSession persistence, isolated by
+    // metadata.module='positioning'. A failure here never discards the strategic
+    // insights already inserted above, and the strategic payload above is
+    // unchanged.
+    let positioningInserted = 0
+    try {
+      const [{ data: positioningSnapshots }, { data: sfCourses }] = await Promise.all([
+        supabase
+          .from('social_snapshots')
+          .select('competitor_id,platform,follower_count,total_posts,snapshot_date')
+          .order('snapshot_date', { ascending: false }),
+        supabase
+          .from('sf_courses')
+          .select('competitor_id,upcoming_run_count'),
+      ])
+
+      const positioningRanking = buildSocialRanking(
+        (competitors ?? []).map((c: Competitor) => ({
+          id: c.id, name: c.name, color: c.color, is_hustle: c.is_hustle, tier: c.tier,
+        })),
+        (positioningSnapshots ?? []) as Parameters<typeof buildSocialRanking>[1],
+      )
+
+      const nameById = new Map((competitors ?? []).map((c: Competitor) => [c.id, c.name]))
+      const courseRunsByName: Record<string, number> = {}
+      for (const row of (sfCourses ?? []) as { competitor_id: string; upcoming_run_count: number | null }[]) {
+        const name = nameById.get(row.competitor_id)
+        if (!name) continue
+        courseRunsByName[name] = (courseRunsByName[name] ?? 0) + (row.upcoming_run_count ?? 0)
+      }
+
+      const recommendationDraft = await generateHustleRecommendation({
+        socialRanking: positioningRanking.map((r) => ({
+          name: r.competitor_name,
+          is_hustle: r.is_hustle,
+          rank: r.rank,
+          total_followers: r.total_followers,
+        })),
+        courseCount: courseRunsByName,
+      })
+      const { insights: stampedRecommendation } = stampInsightsWithSession([recommendationDraft], {
+        source: 'cron',
+        durationMs: Date.now() - startTime,
+        module: 'positioning',
+      })
+      const { data: recInserted, error: recError } = await supabase
+        .from('strategic_insights')
+        .insert(stampedRecommendation)
+        .select()
+      if (recError) throw new Error(recError.message)
+      positioningInserted = recInserted?.length ?? 0
+    } catch (recErr) {
+      console.error('Hustle positioning recommendation generation failed:', recErr)
+    }
+
     const duration = Date.now() - startTime
     return NextResponse.json({
       success: true,
       session_id: sessionId,
       insights_generated: inserted?.length ?? 0,
+      positioning_recommendations: positioningInserted,
       duration_ms: duration,
       timestamp: new Date().toISOString(),
     })

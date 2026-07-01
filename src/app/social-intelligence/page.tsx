@@ -46,7 +46,7 @@ const THEME_COLOR: Record<string, string> = {
 async function getData() {
   const supabase = await createClient()
 
-  const [compRes, snapRes, courseRes, themeRes, alertRes, profileRes] = await Promise.all([
+  const [compRes, snapRes, courseRes, themeRes, alertRes, profileRes, recRes] = await Promise.all([
     supabase.from('competitors').select('id,name,color,is_hustle').eq('active', true).order('name'),
     supabase.from('social_snapshots')
       .select('competitor_id,platform,follower_count,total_posts,data_confidence,snapshot_date')
@@ -63,6 +63,16 @@ async function getData() {
     supabase.from('social_profiles')
       .select('competitor_id,platform,url')
       .eq('active', true),
+    // Latest AI-generated "Hustle vs Market" recommendation, produced by the AI
+    // refresh cron and isolated via metadata.module='positioning'. Read here so
+    // the page never calls Gemini at render time.
+    supabase.from('strategic_insights')
+      .select('body')
+      .eq('insight_type', 'recommendation')
+      .eq('metadata->>module', 'positioning')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ])
 
   const competitors = compRes.data ?? []
@@ -233,7 +243,11 @@ async function getData() {
 
   // ── Hustle vs Market numbers ──────────────────────────────────────────────
   const hustleCourseGap = marketCourseLeader ? marketCourseLeader.courseTotal - (hustleIntel?.courseTotal ?? 0) : 0
-  const recommendation = hustleIntel ? buildRecommendation(hustleIntel, hustleCourseRank, hustleCourseGap, ytRanked.length, hustleYtRank) : ''
+  // Prefer the AI-generated recommendation persisted by the refresh cron; fall
+  // back to the deterministic template only when no AI insight exists yet.
+  const aiRecommendation = (recRes.data as { body: string } | null)?.body?.trim() || null
+  const recommendation = aiRecommendation
+    ?? (hustleIntel ? buildRecommendation(hustleIntel, hustleCourseRank, hustleCourseGap, ytRanked.length, hustleYtRank) : '')
 
   return {
     intel, audienceBoard, growthBoard, allGrowthAlerts,
@@ -643,13 +657,20 @@ export default async function SocialIntelligencePage() {
                     good: false,
                     note: 'YouTube only — social data unavailable',
                   },
-                  {
-                    label: 'Posting Rank',
-                    value: 'Data unavailable',
-                    sub: 'Social posts unavailable',
-                    good: false,
-                    note: 'Tracking starts from today',
-                  },
+                  // ── Posting Rank card hidden ───────────────────────────────
+                  // No reliable live source for social posting *frequency* exists:
+                  // social_snapshots.total_posts is a cumulative count (often null)
+                  // and would need two-snapshot diffing to derive a rate. The card
+                  // was 100% hardcoded 'Data unavailable', so it is guarded out
+                  // here rather than shown empty. Restore this object to bring it
+                  // back once a real posting-frequency source exists.
+                  // {
+                  //   label: 'Posting Rank',
+                  //   value: 'Data unavailable',
+                  //   sub: 'Social posts unavailable',
+                  //   good: false,
+                  //   note: 'Tracking starts from today',
+                  // },
                   {
                     label: 'Course Catalogue Size',
                     value: `${hustleIntel.courseCatalogSize}`,
